@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Glassbox IT Portal</title>
     
-    <!-- Import Chart.js for Insights Graphing -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Import Chart.js for Insights Graphing (Pinned to v4.4.2 for Security) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
     
     <style>
         /* Modern CSS Variables for Light/Dark Mode */
@@ -386,6 +386,31 @@
                 </div>
             </div>
 
+            <!-- NEW: LIVE TRAFFIC AUDIT TABLE -->
+            <div class="admin-controls">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h3>🚦 Live URL Traffic (Audit Log)</h3>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Monitor exact URLs visited to uncover hit-and-run shadow IT.</p>
+                    </div>
+                    <button class="btn-secondary" onclick="loadLiveTraffic()" style="padding: 0.5rem 1rem; font-size: 0.85rem;">🔄 Refresh</button>
+                </div>
+                
+                <table style="margin-top: 1rem;">
+                    <thead>
+                        <tr>
+                            <th style="width: 50%;">Normalized URL</th>
+                            <th>Status</th>
+                            <th>Hits</th>
+                            <th style="width: 200px;">Quick Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="liveTrafficTableBody">
+                        <!-- Rows injected via JS -->
+                    </tbody>
+                </table>
+            </div>
+
             <div class="admin-controls">
                 <h3>✅ Manage Approved Apps</h3>
                 <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Add academic domains here. Time spent on these apps is always logged for ROI calculation.</p>
@@ -519,6 +544,7 @@
             // If auth is successful, show dashboard and fetch Insights data
             document.getElementById('dashboard').style.display = "block";
             loadInsights(); 
+            loadLiveTraffic();
             loadApprovedApps();
 
         } catch (error) {
@@ -774,6 +800,90 @@
                 }
             }
         });
+    }
+
+    // --- Live Traffic Sub-System ---
+
+    async function loadLiveTraffic() {
+        const tbody = document.getElementById('liveTrafficTableBody');
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading traffic data...</td></tr>`;
+
+        try {
+            const response = await fetch(`${currentWorkerUrl}/api/admin/insight/traffic?limit=50`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${currentSecret}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) throw new Error("Failed to load live traffic");
+
+            const data = await response.json();
+            tbody.innerHTML = "";
+
+            if (!data.traffic || data.traffic.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">No live traffic data available yet.</td></tr>`;
+                return;
+            }
+
+            data.traffic.forEach(row => {
+                const tr = document.createElement('tr');
+                
+                // Status Badge styling
+                const isApproved = row.status === 'approved';
+                const badgeColor = isApproved ? 'var(--success)' : 'var(--danger)';
+                const statusBadge = `<span style="background: ${badgeColor}; color: white; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: bold;">${row.status.toUpperCase()}</span>`;
+                
+                // Extract the root domain for the "Block Domain" quick action
+                const domain = row.target.split('/')[0];
+
+                tr.innerHTML = `
+                    <td style="word-break: break-all; font-family: monospace; font-size: 0.85rem;">${row.target}</td>
+                    <td>${statusBadge}</td>
+                    <td><strong>${row.hits}</strong></td>
+                    <td class="actions">
+                        <button class="btn-deny" onclick="quickBlock('${row.target}', 'path')" title="Block this exact URL">Block Path</button>
+                        <button class="btn-deny" onclick="quickBlock('${domain}', 'domain')" title="Block the entire domain" style="background-color: var(--secondary);">Block Domain</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } catch (error) {
+            console.error("Traffic Error:", error);
+            tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--danger); padding: 2rem;">Failed to load traffic data.</td></tr>`;
+        }
+    }
+
+    async function quickBlock(target, matchType) {
+        if (!confirm(`Are you sure you want to block this ${matchType}?\n\nTarget: ${target}`)) return;
+
+        try {
+            const response = await fetch(`${currentWorkerUrl}/api/admin/filter/block`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${currentSecret}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ blocks: [{ target: target, matchType: matchType }] })
+            });
+
+            if (response.ok) {
+                alert(`Successfully blocked ${target}!`);
+                
+                // Refresh the tables to reflect the new state
+                loadLiveTraffic();
+                
+                // Also trigger a refresh on the web filter table if we want, 
+                // but for now, navigating back to the Web Filter tab will show it manually if they want to remove it.
+            } else {
+                const err = await response.json();
+                throw new Error(err.error || "Server error");
+            }
+        } catch (error) {
+            console.error("Quick Block Error:", error);
+            alert(`Failed to block: ${error.message}`);
+        }
     }
 
     // --- Approved Apps Sub-System ---
