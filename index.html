@@ -307,12 +307,12 @@
         <div id="tab-filter" class="tab-content active">
             <div class="admin-controls">
                 <h3>🚫 Manually Block Domains</h3>
-                <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Specify targets to block. Choose "Domain" to wildcard subdomains, or "Path" for specific URLs.</p>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Specify targets to block. Choose "Domain" to wildcard subdomains, "Path" for specific URLs, or "Regex" for advanced patterns.</p>
                 
                 <table class="block-table" style="width: 100%; margin-top: 0.5rem;">
                     <thead>
                         <tr>
-                            <th style="width: 60%;">Target (e.g., badsite.com or badsite.com/games)</th>
+                            <th style="width: 60%;">Target (e.g., badsite.com, badsite.com/games, or ^https:\/\/.*)</th>
                             <th style="width: 30%;">Match Type</th>
                             <th style="width: 10%; text-align: center;">Remove</th>
                         </tr>
@@ -444,12 +444,13 @@
         
         tr.innerHTML = `
             <td>
-                <input type="text" class="block-target" placeholder="badsite.com" value="${defaultTarget}" style="width: 100%; margin: 0;" required>
+                <input type="text" class="block-target" placeholder="badsite.com or ^https:\/\/.*" value="${defaultTarget}" style="width: 100%; margin: 0;" required>
             </td>
             <td>
                 <select class="block-type" style="width: 100%; margin: 0;">
                     <option value="domain" ${defaultType === 'domain' ? 'selected' : ''}>Domain (Wildcard)</option>
                     <option value="path" ${defaultType === 'path' ? 'selected' : ''}>Exact Path</option>
+                    <option value="regex" ${defaultType === 'regex' ? 'selected' : ''}>Regex (Advanced)</option>
                 </select>
             </td>
             <td style="text-align: center;">
@@ -616,9 +617,13 @@
         const blocks = [];
 
         rows.forEach(row => {
-            const target = row.querySelector('.block-target').value.trim();
+            let target = row.querySelector('.block-target').value.trim();
             const matchType = row.querySelector('.block-type').value;
             if (target) {
+                // Only lowercase if it's NOT a regex. Regexes can be case-sensitive.
+                if (matchType !== 'regex') {
+                    target = target.toLowerCase();
+                }
                 blocks.push({ target: target, matchType: matchType });
             }
         });
