@@ -50,8 +50,9 @@ self.addEventListener('push', function(event) {
         badge: 'https://cdn-icons-png.flaticon.com/512/2040/2040504.png',
         data: data, // Stores the requestId and target for the button clicks
         actions: [
-            { action: 'approve', title: '✅ Approve' },
-            { action: 'deny', title: '❌ Deny' }
+            // 🎯 FIX 1: Use highly custom IDs so the OS doesn't hijack the string
+            { action: 'glassbox-action-approve', title: '✅ Approve' },
+            { action: 'glassbox-action-deny', title: '❌ Deny' }
         ],
         requireInteraction: true // Keeps the notification open until clicked
     };
@@ -80,14 +81,23 @@ self.addEventListener('notificationclick', function(event) {
     const normalizedAction = clickedAction.toLowerCase().trim();
     dbgOutput += `3. Normalized Action: "${normalizedAction}"\n`;
 
+    // 🎯 FIX 2: Translate the custom ID back to the standard API action
+    let apiAction = null;
+    if (normalizedAction === 'glassbox-action-approve' || normalizedAction === 'approve') {
+        apiAction = 'approve';
+    } else if (normalizedAction === 'glassbox-action-deny' || normalizedAction === 'deny') {
+        apiAction = 'deny';
+    }
+
     // If they clicked Approve or Deny, fire off the API request!
-    if (normalizedAction === 'approve' || normalizedAction === 'deny') {
+    if (apiAction) {
         event.waitUntil((async () => {
             try {
                 const workerUrl = await getConfig('workerUrl');
                 const adminSecret = await getConfig('adminSecret');
 
                 dbgOutput += `4. Auth Loaded: URL=${!!workerUrl}, Secret=${!!adminSecret}\n`;
+                dbgOutput += `-> Mapped API Action: ${apiAction}\n`;
 
                 if (!workerUrl || !adminSecret) {
                     dbgOutput += `❌ ERROR: Missing credentials in IndexedDB.\n`;
@@ -115,7 +125,7 @@ self.addEventListener('notificationclick', function(event) {
                 
                 const payload = {
                     requestId: data.requestId,
-                    action: normalizedAction,
+                    action: apiAction, // 🎯 Use the translated action!
                     target: finalTarget,
                     matchType: finalMatchType
                 };
@@ -144,7 +154,7 @@ self.addEventListener('notificationclick', function(event) {
             }
         })());
     } else {
-        dbgOutput += `❌ ERROR: Action did not match 'approve' or 'deny'.\n`;
+        dbgOutput += `❌ ERROR: Action did not map to 'approve' or 'deny'.\n`;
         if (DEBUG_MODE) event.waitUntil(openDebugLog(dbgOutput));
     }
 });
