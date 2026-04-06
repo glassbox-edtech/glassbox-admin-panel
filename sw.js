@@ -48,11 +48,12 @@ self.addEventListener('push', function(event) {
         body: `URL: ${data.url}\nReason: ${data.reason}`,
         icon: 'https://cdn-icons-png.flaticon.com/512/2040/2040504.png', // Placeholder shield icon
         badge: 'https://cdn-icons-png.flaticon.com/512/2040/2040504.png',
+        tag: data.requestId ? `req-${data.requestId}` : 'new-req', // 🎯 FIX 1: Force Android to create a unique UI state
         data: data, // Stores the requestId and target for the button clicks
         actions: [
-            // 🎯 FIX 1: Use ultra-short, non-standard IDs to prevent OS index swapping
-            { action: 'action_yes', title: '✅ Approve' },
-            { action: 'action_no', title: '❌ Deny' }
+            // 🎯 FIX 2: Remove Emojis and use pure alphanumeric strings to prevent Android Intent parsing bugs
+            { action: 'APPROVEREQ', title: 'Approve' },
+            { action: 'DENYREQ', title: 'Deny' }
         ],
         requireInteraction: true // Keeps the notification open until clicked
     };
@@ -81,11 +82,11 @@ self.addEventListener('notificationclick', function(event) {
     const normalizedAction = clickedAction.toLowerCase().trim();
     dbgOutput += `3. Normalized Action: "${normalizedAction}"\n`;
 
-    // 🎯 FIX 2: Translate the new ultra-short IDs back to the API standard
+    // 🎯 FIX 3: Translate the new alphanumeric IDs back to the API standard
     let apiAction = null;
-    if (normalizedAction === 'action_yes' || normalizedAction === 'approve') {
+    if (normalizedAction === 'approvereq' || normalizedAction === 'approve') {
         apiAction = 'approve';
-    } else if (normalizedAction === 'action_no' || normalizedAction === 'deny') {
+    } else if (normalizedAction === 'denyreq' || normalizedAction === 'deny') {
         apiAction = 'deny';
     }
 
