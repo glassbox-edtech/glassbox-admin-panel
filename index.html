@@ -301,6 +301,7 @@
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('filter', this)">🛡️ Web Filter</button>
             <button class="tab-btn" onclick="switchTab('insights', this)">📊 Insights & Analytics</button>
+            <button class="tab-btn" onclick="switchTab('settings', this)">⚙️ System Settings</button>
         </div>
 
         <!-- TAB 1: WEB FILTER -->
@@ -447,6 +448,33 @@
             </div>
         </div>
 
+        <!-- TAB 3: SYSTEM SETTINGS -->
+        <div id="tab-settings" class="tab-content">
+            <div class="admin-controls">
+                <h3>⚙️ Global System Configuration</h3>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Manage core parameters for the Glassbox backend and extensions.</p>
+                
+                <div style="margin-top: 1.5rem; border: 1px solid var(--border-color); border-radius: 8px; padding: 1.5rem; background: var(--card-bg);">
+                    <h4 style="margin-top: 0; margin-bottom: 1rem;">Analytics & Telemetry</h4>
+                    
+                    <div class="input-group" style="margin-bottom: 1rem; max-width: 400px;">
+                        <label for="setting_insight_unapproved_threshold_minutes">Unapproved Time Threshold (Minutes)</label>
+                        <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem; margin-bottom: 0.5rem;">
+                            Minimum continuous time a student must spend on a Shadow IT site before it is recorded to ROI tracking. Lower to 0 or 1 to capture "quick hits" like web searches.
+                        </p>
+                        <input type="number" id="setting_insight_unapproved_threshold_minutes" value="5" min="0" step="0.1">
+                    </div>
+
+                    <!-- Future Settings Can Go Here -->
+                    
+                    <div style="margin-top: 1.5rem;">
+                        <button class="btn-primary" onclick="saveSettings()">Save Configuration</button>
+                        <span id="settingsStatusMsg" style="margin-left: 1rem; font-size: 0.9rem; font-weight: bold; display: none;"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
     </div>
 </div>
 
@@ -554,6 +582,7 @@
             document.getElementById('dashboard').style.display = "block";
             refreshInsightsTab(); 
             loadApprovedApps();
+            loadSettings();
 
         } catch (error) {
             console.error(error);
@@ -1016,6 +1045,73 @@
             }
         } catch (error) {
             console.error("Error removing app:", error);
+        }
+    }
+
+    // ==========================================
+    // SYSTEM SETTINGS MANAGEMENT
+    // ==========================================
+
+    async function loadSettings() {
+        try {
+            const response = await fetch(`${currentWorkerUrl}/api/admin/settings`, {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${currentSecret}` }
+            });
+
+            if (!response.ok) throw new Error("Failed to load settings");
+
+            const data = await response.json();
+            
+            if (data.settings && Array.isArray(data.settings)) {
+                data.settings.forEach(setting => {
+                    const inputElem = document.getElementById(`setting_${setting.setting_key}`);
+                    if (inputElem) {
+                        inputElem.value = setting.setting_value;
+                    }
+                });
+            }
+        } catch (error) {
+            console.error("Error loading settings:", error);
+        }
+    }
+
+    async function saveSettings() {
+        const statusMsg = document.getElementById('settingsStatusMsg');
+        statusMsg.style.display = 'none';
+        
+        const thresholdInput = document.getElementById('setting_insight_unapproved_threshold_minutes');
+        
+        const payload = {
+            settings: [
+                { key: 'insight_unapproved_threshold_minutes', value: thresholdInput.value.trim() }
+            ]
+        };
+
+        try {
+            const response = await fetch(`${currentWorkerUrl}/api/admin/settings`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${currentSecret}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.ok) {
+                statusMsg.textContent = "✅ Settings saved successfully!";
+                statusMsg.style.color = "var(--success)";
+                statusMsg.style.display = "inline";
+                setTimeout(() => statusMsg.style.display = 'none', 3000);
+            } else {
+                const err = await response.json();
+                throw new Error(err.error || "Server error");
+            }
+        } catch (error) {
+            console.error("Settings Save Error:", error);
+            statusMsg.textContent = `❌ Failed to save: ${error.message}`;
+            statusMsg.style.color = "var(--danger)";
+            statusMsg.style.display = "inline";
         }
     }
 
