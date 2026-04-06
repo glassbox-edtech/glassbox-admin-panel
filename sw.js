@@ -61,18 +61,20 @@ self.addEventListener('push', function(event) {
 self.addEventListener('notificationclick', function(event) {
     event.notification.close(); // Instantly close the popup
 
-    const action = event.action;
+    const clickedAction = event.action;
     const data = event.notification.data;
 
     // If they just clicked the body of the notification, open the dashboard
-    if (!action) {
-        // 🎯 FIX: Use self.registration.scope instead of '/' to support GitHub pages paths
+    if (!clickedAction) {
         event.waitUntil(clients.openWindow(self.registration.scope));
         return;
     }
 
+    // 🎯 FIX 1: Normalize the action to lowercase to prevent OS-level capitalization bugs
+    const normalizedAction = clickedAction.toLowerCase();
+
     // If they clicked Approve or Deny, fire off the API request!
-    if (action === 'approve' || action === 'deny') {
+    if (normalizedAction === 'approve' || normalizedAction === 'deny') {
         event.waitUntil((async () => {
             try {
                 const workerUrl = await getConfig('workerUrl');
@@ -83,7 +85,6 @@ self.addEventListener('notificationclick', function(event) {
                     return;
                 }
 
-                // 🎯 FIX: Extract and sanitize the URL exactly like the dashboard UI does
                 let finalTarget = data.url;
                 let finalMatchType = data.matchType || 'domain';
 
@@ -100,8 +101,13 @@ self.addEventListener('notificationclick', function(event) {
                     console.warn("Could not parse URL intelligently, using raw input.");
                 }
 
+                // 🎯 FIX 2: Ensure the worker URL never has a trailing slash before appending our path
+                const cleanWorkerUrl = workerUrl.endsWith('/') ? workerUrl.slice(0, -1) : workerUrl;
+
+                console.log(`[SW] Firing ${normalizedAction} for request ID: ${data.requestId}`);
+
                 // Fire the exact same POST request the dashboard uses
-                await fetch(`${workerUrl}/api/admin/filter/resolve`, {
+                const response = await fetch(`${cleanWorkerUrl}/api/admin/filter/resolve`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${adminSecret}`,
@@ -109,13 +115,16 @@ self.addEventListener('notificationclick', function(event) {
                     },
                     body: JSON.stringify({
                         requestId: data.requestId,
-                        action: action,
+                        action: normalizedAction,
                         target: finalTarget,
                         matchType: finalMatchType
                     })
                 });
                 
-                console.log(`Successfully executed quick action: ${action}`);
+                // 🎯 FIX 3: Log the exact server response to the SW console for debugging
+                const responseText = await response.text();
+                console.log(`[SW] Server responded: ${response.status} - ${responseText}`);
+                
             } catch (err) {
                 console.error("Quick Action failed:", err);
             }
