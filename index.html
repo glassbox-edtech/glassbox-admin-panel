@@ -708,9 +708,22 @@
     document.getElementById('blockBtn').addEventListener('click', blockDomains);
     document.getElementById('addRowBtn').addEventListener('click', () => addBlockRow());
 
-    // Initialize with one empty row
-    document.addEventListener('DOMContentLoaded', () => {
+    // Initialize with one empty row and attempt to auto-fill config
+    document.addEventListener('DOMContentLoaded', async () => {
         addBlockRow();
+        
+        // 🎯 NEW: Fetch default configuration to auto-fill the Worker URL
+        try {
+            const configRes = await fetch('config.json');
+            if (configRes.ok) {
+                const config = await configRes.json();
+                if (config.workerUrl) {
+                    document.getElementById('workerUrl').value = config.workerUrl;
+                }
+            }
+        } catch (err) {
+            console.log("No config.json found. Proceeding with manual URL entry.");
+        }
     });
 
     // Tab Switching Logic
