@@ -536,6 +536,19 @@
     let outliersData = [], currentOutliersPage = 1;
     let trafficData = [], currentTrafficPage = 1;
     const analyticsPageLimit = 10;
+    const SESSION_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour in milliseconds
+
+    // ==========================================
+    // 🔒 SESSION MANAGEMENT HELPERS
+    // ==========================================
+    function updateSessionActivity() {
+        const sessionData = sessionStorage.getItem('glassbox_session');
+        if (sessionData) {
+            const session = JSON.parse(sessionData);
+            session.lastActive = Date.now();
+            sessionStorage.setItem('glassbox_session', JSON.stringify(session));
+        }
+    }
 
     // ==========================================
     // 🛡️ SECURITY: XSS SANITIZATION HELPERS
@@ -569,6 +582,37 @@
 
     document.addEventListener('DOMContentLoaded', async () => {
         addBlockRow();
+
+        // Check for an existing valid session before showing the login screen
+        const sessionData = sessionStorage.getItem('glassbox_session');
+        if (sessionData) {
+            const session = JSON.parse(sessionData);
+            if (Date.now() - session.lastActive > SESSION_TIMEOUT_MS) {
+                // Session is older than 1 hour - clear it out
+                sessionStorage.removeItem('glassbox_session');
+            } else {
+                // Restore active session
+                currentWorkerUrl = session.workerUrl;
+                currentSecret = session.token;
+                currentUserRole = session.role;
+                updateSessionActivity();
+
+                document.getElementById('loginPanel').style.display = "none";
+                document.getElementById('logoutBtn').style.display = "block";
+                document.getElementById('dashboard').style.display = "block";
+
+                await loadRequests();
+                loadActiveFilters(); 
+                refreshInsightsTab(); 
+                loadApprovedApps();
+                loadStaff();
+                loadClassrooms();
+                
+                checkPushStatus(); 
+                return; // Exit early so we don't try to fetch config.json unnecessarily
+            }
+        }
+
         try {
             const configRes = await fetch('config.json');
             if (configRes.ok) {
@@ -583,6 +627,7 @@
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.getElementById(`tab-${tabId}`).classList.add('active');
         btnElement.classList.add('active');
+        updateSessionActivity();
     }
 
     function displayVerboseError(shortMessage, errorObj) {
@@ -649,6 +694,14 @@
             currentSecret = data.token;
             currentUserRole = data.role;
             
+            // Save successful login state to sessionStorage
+            sessionStorage.setItem('glassbox_session', JSON.stringify({
+                token: currentSecret,
+                role: data.role,
+                workerUrl: currentWorkerUrl,
+                lastActive: Date.now()
+            }));
+            
             document.getElementById('loginPanel').style.display = "none";
             document.getElementById('logoutBtn').style.display = "block";
             document.getElementById('dashboard').style.display = "block";
@@ -679,6 +732,9 @@
                 headers: { 'Authorization': `Bearer ${currentSecret}` }
             });
         } catch (e) {} 
+        
+        // Wipe local session storage
+        sessionStorage.removeItem('glassbox_session');
         location.reload();
     }
 
@@ -686,6 +742,7 @@
     // STAFF & CLASSROOM MANAGEMENT
     // ---------------------------------------------------------
     async function loadStaff() {
+        updateSessionActivity();
         try {
             const res = await fetch(`${currentWorkerUrl}/api/admin/users`, {
                 headers: { 'Authorization': `Bearer ${currentSecret}` }
@@ -778,6 +835,7 @@
 
     // --- Classrooms ---
     async function loadClassrooms() {
+        updateSessionActivity();
         try {
             const res = await fetch(`${currentWorkerUrl}/api/admin/classrooms`, {
                 headers: { 'Authorization': `Bearer ${currentSecret}` }
@@ -940,6 +998,7 @@
     }
 
     async function loadRequests() {
+        updateSessionActivity();
         const tbody = document.getElementById('requestsTableBody');
         tbody.innerHTML = `<tr><td colspan="5" class="loading-row"><div class="loading-content"><div class="spinner"></div><span>Loading requests...</span></div></td></tr>`;
         
@@ -1016,6 +1075,7 @@
     }
 
     async function loadActiveFilters(page = currentFilterPage) {
+        updateSessionActivity();
         currentFilterPage = page;
         const tbody = document.getElementById('activeRulesTableBody');
         tbody.innerHTML = `<tr><td colspan="5" class="loading-row"><div class="spinner"></div></td></tr>`;
@@ -1092,6 +1152,7 @@
     // INSIGHTS & ROI
     // ---------------------------------------------------------
     function refreshInsightsTab() {
+        updateSessionActivity();
         loadInsights();
         loadLiveTraffic();
         loadOutliers();
@@ -1175,6 +1236,7 @@
     }
 
     async function loadOutliers() {
+        updateSessionActivity();
         const tbody = document.getElementById('outliersTableBody');
         tbody.innerHTML = `<tr><td colspan="4" class="loading-row"><div class="spinner"></div></td></tr>`;
         try {
@@ -1230,6 +1292,7 @@
     }
 
     async function loadLiveTraffic() {
+        updateSessionActivity();
         const tbody = document.getElementById('liveTrafficTableBody');
         tbody.innerHTML = `<tr><td colspan="4" class="loading-row"><div class="spinner"></div></td></tr>`;
         try {
@@ -1299,6 +1362,7 @@
     }
 
     async function loadApprovedApps() {
+        updateSessionActivity();
         const tbody = document.getElementById('approvedAppsTableBody');
         tbody.innerHTML = `<tr><td colspan="4" class="loading-row"><div class="spinner"></div></td></tr>`;
         try {

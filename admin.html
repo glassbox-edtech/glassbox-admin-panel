@@ -809,6 +809,19 @@
     let outliersData = [], currentOutliersPage = 1;
     let trafficData = [], currentTrafficPage = 1;
     const analyticsPageLimit = 10;
+    const SESSION_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour in milliseconds
+
+    // ==========================================
+    // 🔒 SESSION MANAGEMENT HELPERS
+    // ==========================================
+    function updateSessionActivity() {
+        const sessionData = sessionStorage.getItem('glassbox_session');
+        if (sessionData) {
+            const session = JSON.parse(sessionData);
+            session.lastActive = Date.now();
+            sessionStorage.setItem('glassbox_session', JSON.stringify(session));
+        }
+    }
 
     // ==========================================
     // 🛡️ SECURITY: XSS SANITIZATION HELPERS
@@ -844,6 +857,42 @@
     document.addEventListener('DOMContentLoaded', async () => {
         addBlockRow();
         
+        // Check for an existing valid session before showing the login screen
+        const sessionData = sessionStorage.getItem('glassbox_session');
+        if (sessionData) {
+            const session = JSON.parse(sessionData);
+            if (Date.now() - session.lastActive > SESSION_TIMEOUT_MS) {
+                // Session is older than 1 hour - clear it out
+                sessionStorage.removeItem('glassbox_session');
+            } else {
+                // Restore active session
+                currentWorkerUrl = session.workerUrl;
+                currentSecret = session.token;
+                currentUserRole = session.role;
+                updateSessionActivity();
+
+                document.getElementById('loginPanel').style.display = "none";
+                document.getElementById('logoutBtn').style.display = "block";
+                document.getElementById('dashboard').style.display = "block";
+
+                // Role-based UI rendering
+                if (currentUserRole === 'master_admin') {
+                    document.getElementById('tabBtnOrg').style.display = "block";
+                    loadOrgData(); // Preload org data in background
+                }
+
+                // Fetch Insights data and remaining dashboard elements
+                await loadRequests();
+                loadActiveFilters(); 
+                refreshInsightsTab(); 
+                loadApprovedApps();
+                loadSettings();
+                initPushNotifications(); 
+                
+                return; // Exit early so we don't try to fetch config.json unnecessarily
+            }
+        }
+        
         // 🎯 Fetch default configuration to auto-fill the Worker URL invisibly
         try {
             const configRes = await fetch('config.json');
@@ -864,6 +913,7 @@
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.getElementById(`tab-${tabId}`).classList.add('active');
         btnElement.classList.add('active');
+        updateSessionActivity();
     }
 
     function addBlockRow(defaultTarget = '', defaultType = 'domain') {
@@ -963,6 +1013,14 @@
             currentSecret = data.token;
             currentUserRole = data.role;
             
+            // Save successful login state to sessionStorage
+            sessionStorage.setItem('glassbox_session', JSON.stringify({
+                token: currentSecret,
+                role: currentUserRole,
+                workerUrl: currentWorkerUrl,
+                lastActive: Date.now()
+            }));
+            
             // UI Changes based on auth success
             document.getElementById('loginPanel').style.display = "none";
             document.getElementById('logoutBtn').style.display = "block";
@@ -1008,6 +1066,7 @@
         } catch (e) {} // Ignore network errors on logout
         
         currentSecret = "";
+        sessionStorage.removeItem('glassbox_session');
         location.reload();
     }
 
@@ -1087,6 +1146,7 @@
     // ==========================================
 
     async function loadRequests() {
+        updateSessionActivity();
         const tbody = document.getElementById('requestsTableBody');
         tbody.innerHTML = `<tr><td colspan="5" class="loading-row"><div class="loading-content"><div class="spinner"></div><span>Loading pending requests...</span></div></td></tr>`;
         
@@ -1273,6 +1333,7 @@
     // ==========================================
     
     async function loadActiveFilters(page = currentFilterPage) {
+        updateSessionActivity();
         currentFilterPage = page;
         const tbody = document.getElementById('activeRulesTableBody');
         tbody.innerHTML = `<tr><td colspan="4" class="loading-row"><div class="loading-content"><div class="spinner"></div><span>Loading active rules...</span></div></td></tr>`;
@@ -1391,6 +1452,7 @@
     // ==========================================
 
     function refreshInsightsTab() {
+        updateSessionActivity();
         loadInsights();
         loadLiveTraffic();
         loadOutliers();
@@ -1563,6 +1625,7 @@
     // --- Outliers Sub-System ---
 
     async function loadOutliers() {
+        updateSessionActivity();
         const tbody = document.getElementById('outliersTableBody');
         tbody.innerHTML = `<tr><td colspan="4" class="loading-row"><div class="loading-content"><div class="spinner"></div><span>Scanning for outliers...</span></div></td></tr>`;
         document.getElementById('outliersPagination').style.display = 'none';
@@ -1655,6 +1718,7 @@
     // --- Live Traffic Sub-System ---
 
     async function loadLiveTraffic() {
+        updateSessionActivity();
         const tbody = document.getElementById('liveTrafficTableBody');
         tbody.innerHTML = `<tr><td colspan="4" class="loading-row"><div class="loading-content"><div class="spinner"></div><span>Fetching live traffic...</span></div></td></tr>`;
         document.getElementById('trafficPagination').style.display = 'none';
@@ -1780,6 +1844,7 @@
     // --- Approved Apps Sub-System ---
 
     async function loadApprovedApps() {
+        updateSessionActivity();
         const tbody = document.getElementById('approvedAppsTableBody');
         tbody.innerHTML = `<tr><td colspan="4" class="loading-row"><div class="loading-content"><div class="spinner"></div><span>Loading approved apps...</span></div></td></tr>`;
         
@@ -1886,6 +1951,7 @@
     // ==========================================
 
     async function loadOrgData() {
+        updateSessionActivity();
         loadSchools();
         loadStaff();
         loadStudents();
@@ -1893,6 +1959,7 @@
 
     // --- Schools ---
     async function loadSchools() {
+        updateSessionActivity();
         try {
             const res = await fetch(`${currentWorkerUrl}/api/admin/schools`, {
                 headers: { 'Authorization': `Bearer ${currentSecret}` }
@@ -1958,6 +2025,7 @@
 
     // --- Staff ---
     async function loadStaff() {
+        updateSessionActivity();
         try {
             const res = await fetch(`${currentWorkerUrl}/api/admin/users`, {
                 headers: { 'Authorization': `Bearer ${currentSecret}` }
@@ -2041,6 +2109,7 @@
 
     // --- Students ---
     async function loadStudents() {
+        updateSessionActivity();
         try {
             const res = await fetch(`${currentWorkerUrl}/api/admin/schools/students`, {
                 headers: { 'Authorization': `Bearer ${currentSecret}` }
@@ -2113,6 +2182,7 @@
     // ==========================================
 
     async function loadSettings() {
+        updateSessionActivity();
         try {
             const response = await fetch(`${currentWorkerUrl}/api/admin/settings`, {
                 method: 'GET',

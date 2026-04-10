@@ -252,6 +252,7 @@
 <script>
     let currentWorkerUrl = "";
     let currentSecret = ""; 
+    const SESSION_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour in milliseconds
 
     // ==========================================
     // 🛡️ SECURITY: XSS SANITIZATION HELPERS
@@ -279,9 +280,45 @@
             .replace(/>/g, '\\x3e');
     }
 
+    // ==========================================
+    // 🔒 SESSION MANAGEMENT HELPERS
+    // ==========================================
+    function updateSessionActivity() {
+        const sessionData = sessionStorage.getItem('glassbox_session');
+        if (sessionData) {
+            const session = JSON.parse(sessionData);
+            session.lastActive = Date.now();
+            sessionStorage.setItem('glassbox_session', JSON.stringify(session));
+        }
+    }
+
     document.getElementById('loginBtn').addEventListener('click', handleLogin);
 
     document.addEventListener('DOMContentLoaded', async () => {
+        // Check for an existing valid session before showing the login screen
+        const sessionData = sessionStorage.getItem('glassbox_session');
+        if (sessionData) {
+            const session = JSON.parse(sessionData);
+            if (Date.now() - session.lastActive > SESSION_TIMEOUT_MS) {
+                // Session is older than 1 hour - clear it out
+                sessionStorage.removeItem('glassbox_session');
+            } else {
+                // Restore active session
+                currentWorkerUrl = session.workerUrl;
+                currentSecret = session.token;
+                updateSessionActivity();
+
+                document.getElementById('loginPanel').style.display = "none";
+                document.getElementById('logoutBtn').style.display = "block";
+                document.getElementById('dashboard').style.display = "block";
+
+                await loadClassrooms();
+                loadRules();
+                return; // Exit early so we don't try to fetch config.json unnecessarily
+            }
+        }
+
+        // If no active session, fetch the config to prefill the worker URL silently
         try {
             const configRes = await fetch('config.json');
             if (configRes.ok) {
@@ -296,6 +333,7 @@
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.getElementById(`tab-${tabId}`).classList.add('active');
         btnElement.classList.add('active');
+        updateSessionActivity();
     }
 
     async function handleLogin() {
@@ -328,6 +366,14 @@
 
             currentSecret = data.token;
             
+            // Save successful login state to sessionStorage
+            sessionStorage.setItem('glassbox_session', JSON.stringify({
+                token: currentSecret,
+                role: data.role,
+                workerUrl: currentWorkerUrl,
+                lastActive: Date.now()
+            }));
+            
             document.getElementById('loginPanel').style.display = "none";
             document.getElementById('logoutBtn').style.display = "block";
             document.getElementById('dashboard').style.display = "block";
@@ -350,10 +396,14 @@
                 method: 'POST', headers: { 'Authorization': `Bearer ${currentSecret}` }
             });
         } catch (e) {} 
+        
+        // Wipe local session storage
+        sessionStorage.removeItem('glassbox_session');
         location.reload();
     }
 
     async function loadClassrooms() {
+        updateSessionActivity();
         const tbody = document.getElementById('classroomsTableBody');
         const select = document.getElementById('ruleClassroom');
         tbody.innerHTML = `<tr><td colspan="2" class="loading-row"><div class="spinner"></div></td></tr>`;
@@ -389,6 +439,7 @@
     }
 
     async function loadRules() {
+        updateSessionActivity();
         const tbody = document.getElementById('rulesTableBody');
         tbody.innerHTML = `<tr><td colspan="5" class="loading-row"><div class="spinner"></div></td></tr>`;
         
@@ -433,6 +484,7 @@
     }
 
     async function createRule() {
+        updateSessionActivity();
         const classroomId = document.getElementById('ruleClassroom').value;
         const target = document.getElementById('ruleTarget').value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
         const action = document.getElementById('ruleAction').value;
@@ -455,6 +507,7 @@
     }
 
     async function removeRule(id) {
+        updateSessionActivity();
         if (!confirm("Remove this rule?")) return;
         try {
             const res = await fetch(`${currentWorkerUrl}/api/admin/teacher/rules/remove`, {
