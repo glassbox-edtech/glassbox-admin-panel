@@ -145,6 +145,8 @@
         .text-error { color: var(--danger); }
         .text-success { color: var(--success); }
         
+        #errorLog { display: none; background: var(--error-bg); color: var(--error-text); padding: 1rem; border-radius: 6px; font-size: 0.85rem; overflow-x: auto; margin-top: 1rem; border: 1px solid var(--error-border); white-space: pre-wrap; font-family: monospace; }
+        
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .spinner { display: inline-block; width: 1.5rem; height: 1.5rem; border: 3px solid var(--border-color); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; }
         .loading-row td { padding: 3rem !important; text-align: center; color: var(--text-muted); font-weight: 600; }
@@ -172,6 +174,7 @@
     </div>
     
     <div id="statusText"></div>
+    <pre id="errorLog"></pre>
 
     <div id="dashboard">
         <!-- Tabs -->
@@ -281,7 +284,50 @@
     }
 
     // ==========================================
-    // 🔒 SESSION MANAGEMENT HELPERS
+    // 🔐 CLIENT-SIDE CRYPTOGRAPHY HELPERS
+    // ==========================================
+    function hexToBuffer(hex) {
+        const view = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < hex.length; i += 2) {
+            view[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+        }
+        return view.buffer;
+    }
+
+    function bufferToHex(buffer) {
+        return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function sha256(message) {
+        const encoder = new TextEncoder();
+        const hash = await crypto.subtle.digest('SHA-256', encoder.encode(message));
+        return bufferToHex(hash);
+    }
+
+    async function computePBKDF2(passwordHex, saltStr) {
+        const baseKey = await crypto.subtle.importKey(
+            'raw', hexToBuffer(passwordHex), { name: 'PBKDF2' }, false, ['deriveBits']
+        );
+        const encoder = new TextEncoder();
+        const derivedBits = await crypto.subtle.deriveBits(
+            { name: 'PBKDF2', salt: encoder.encode(saltStr), iterations: 100000, hash: 'SHA-256' },
+            baseKey, 256
+        );
+        return bufferToHex(derivedBits);
+    }
+
+    async function computeHMAC(keyHex, messageStr) {
+        const keyBuffer = hexToBuffer(keyHex);
+        const encoder = new TextEncoder();
+        const cryptoKey = await crypto.subtle.importKey(
+            'raw', keyBuffer, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+        );
+        const signature = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(messageStr));
+        return bufferToHex(signature);
+    }
+
+    // ==========================================
+    // 🔒 SESSION MANAGEMENT & ERROR HELPERS
     // ==========================================
     function updateSessionActivity() {
         const sessionData = sessionStorage.getItem('glassbox_session');
@@ -290,6 +336,22 @@
             session.lastActive = Date.now();
             sessionStorage.setItem('glassbox_session', JSON.stringify(session));
         }
+    }
+
+    function displayVerboseError(shortMessage, errorObj) {
+        const statusText = document.getElementById('statusText');
+        const errorLog = document.getElementById('errorLog');
+        statusText.textContent = `❌ ${shortMessage}`;
+        statusText.className = "text-error";
+        errorLog.style.display = "block";
+        errorLog.textContent = `=== ERROR ===\n${errorObj.message || errorObj}`;
+    }
+
+    function clearErrors() {
+        document.getElementById('statusText').textContent = "";
+        document.getElementById('statusText').className = "";
+        document.getElementById('errorLog').style.display = "none";
+        document.getElementById('errorLog').textContent = "";
     }
 
     document.getElementById('loginBtn').addEventListener('click', handleLogin);
@@ -340,21 +402,49 @@
         if (!currentWorkerUrl) {
             currentWorkerUrl = prompt("Worker URL missing. Enter manually:");
             if (!currentWorkerUrl) return;
+            currentWorkerUrl = currentWorkerUrl.endsWith('/') ? currentWorkerUrl.slice(0, -1) : currentWorkerUrl;
         }
 
         const usernameInput = document.getElementById('loginUsername').value.trim();
         const passwordInput = document.getElementById('loginPassword').value.trim();
         const statusText = document.getElementById('statusText');
 
-        if (!usernameInput || !passwordInput) return;
+        if (!usernameInput || !passwordInput) {
+            statusText.textContent = "Please provide both Username and Password.";
+            statusText.className = "text-error";
+            return;
+        }
 
+        clearErrors();
         statusText.innerHTML = '<span class="spinner" style="vertical-align: middle;"></span> Authenticating...';
+        document.getElementById('loginBtn').disabled = true;
         
         try {
+            // STEP 1: Request the Challenge from the Server
+            const challengeRes = await fetch(`${currentWorkerUrl}/api/auth/challenge`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: usernameInput })
+            });
+
+            if (!challengeRes.ok) {
+                throw new Error(await challengeRes.text());
+            }
+
+            const { salt, nonce } = await challengeRes.json();
+
+            // STEP 2: Client-Side Heavy Cryptography (Zero-Knowledge Proof)
+            statusText.innerHTML = '<span class="spinner" style="vertical-align: middle;"></span> Generating secure proof...';
+            
+            const baseHash = await sha256(passwordInput);
+            const derivedKey = await computePBKDF2(baseHash, salt);
+            const clientHmac = await computeHMAC(derivedKey, nonce);
+
+            // STEP 3: Verify the Proof
             const response = await fetch(`${currentWorkerUrl}/api/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: usernameInput, password: passwordInput })
+                body: JSON.stringify({ username: usernameInput, clientHmac: clientHmac })
             });
 
             if (!response.ok) throw new Error(await response.text());
@@ -386,7 +476,9 @@
             loadRules();
 
         } catch (error) {
-            statusText.innerHTML = `<span class="text-error">❌ Authentication Failed.</span>`;
+            displayVerboseError("Authentication Failed.", error);
+        } finally {
+            document.getElementById('loginBtn').disabled = false;
         }
     }
 

@@ -576,6 +576,57 @@
             .replace(/>/g, '\\x3e');
     }
 
+    // ==========================================
+    // 🔐 CLIENT-SIDE CRYPTOGRAPHY HELPERS
+    // ==========================================
+    function hexToBuffer(hex) {
+        const view = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < hex.length; i += 2) {
+            view[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+        }
+        return view.buffer;
+    }
+
+    function bufferToHex(buffer) {
+        return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function sha256(message) {
+        const encoder = new TextEncoder();
+        const hash = await crypto.subtle.digest('SHA-256', encoder.encode(message));
+        return bufferToHex(hash);
+    }
+
+    async function computePBKDF2(passwordHex, saltStr) {
+        const baseKey = await crypto.subtle.importKey(
+            'raw', hexToBuffer(passwordHex), { name: 'PBKDF2' }, false, ['deriveBits']
+        );
+        const encoder = new TextEncoder();
+        const derivedBits = await crypto.subtle.deriveBits(
+            { name: 'PBKDF2', salt: encoder.encode(saltStr), iterations: 100000, hash: 'SHA-256' },
+            baseKey, 256
+        );
+        return bufferToHex(derivedBits);
+    }
+
+    async function computeHMAC(keyHex, messageStr) {
+        const keyBuffer = hexToBuffer(keyHex);
+        const encoder = new TextEncoder();
+        const cryptoKey = await crypto.subtle.importKey(
+            'raw', keyBuffer, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+        );
+        const signature = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(messageStr));
+        return bufferToHex(signature);
+    }
+
+    async function hashEmail(email) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(email.trim().toLowerCase());
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
     document.getElementById('loginBtn').addEventListener('click', handleLogin);
     document.getElementById('blockBtn').addEventListener('click', blockDomains);
     document.getElementById('addRowBtn').addEventListener('click', () => addBlockRow());
@@ -647,17 +698,6 @@
     }
 
     // ---------------------------------------------------------
-    // 🔐 CLIENT-SIDE CRYPTOGRAPHY HELPER
-    // ---------------------------------------------------------
-    async function hashEmail(email) {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(email.trim().toLowerCase());
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    }
-
-    // ---------------------------------------------------------
     // AUTHENTICATION
     // ---------------------------------------------------------
     async function handleLogin() {
@@ -671,17 +711,42 @@
         const passwordInput = document.getElementById('loginPassword').value.trim();
         const statusText = document.getElementById('statusText');
 
-        if (!usernameInput || !passwordInput) return;
+        if (!usernameInput || !passwordInput) {
+            statusText.textContent = "Please provide both Username and Password.";
+            statusText.className = "text-error";
+            return;
+        }
 
         clearErrors();
         statusText.innerHTML = '<span class="spinner" style="vertical-align: middle;"></span> Authenticating...';
         document.getElementById('loginBtn').disabled = true;
         
         try {
+            // STEP 1: Request the Challenge from the Server
+            const challengeRes = await fetch(`${currentWorkerUrl}/api/auth/challenge`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: usernameInput })
+            });
+
+            if (!challengeRes.ok) {
+                throw new Error(await challengeRes.text());
+            }
+
+            const { salt, nonce } = await challengeRes.json();
+
+            // STEP 2: Client-Side Heavy Cryptography (Zero-Knowledge Proof)
+            statusText.innerHTML = '<span class="spinner" style="width: 1rem; height: 1rem; border-width: 2px; margin-right: 0.5rem; vertical-align: middle;"></span><span style="vertical-align: middle;">Generating secure cryptographic proof...</span>';
+            
+            const baseHash = await sha256(passwordInput);
+            const derivedKey = await computePBKDF2(baseHash, salt);
+            const clientHmac = await computeHMAC(derivedKey, nonce);
+
+            // STEP 3: Verify the Proof
             const response = await fetch(`${currentWorkerUrl}/api/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: usernameInput, password: passwordInput })
+                body: JSON.stringify({ username: usernameInput, clientHmac: clientHmac })
             });
 
             if (!response.ok) throw new Error(await response.text());
